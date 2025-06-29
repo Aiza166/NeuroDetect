@@ -81,6 +81,7 @@ NeuroDetect/
 │       └── predict.py           # Model inference and evaluation script
 ```
 
+---
 
 ## 📦 Requirements
 
