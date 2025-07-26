@@ -29,8 +29,8 @@ prediction = model.predict(input_scaled)[0][0]
 label = "Parkinson's Detected" if prediction > 0.5 else "No Parkinson's"
 
 # Output
-print(f"🧠 Prediction Probability: {prediction:.4f}")
-print(f"✅ Result: {label}")
+print(f"Prediction Probability: {prediction:.4f}")
+print(f"Result: {label}")
 
 # This code demonstrates how to load a pre-trained model and scaler,
 # prepare a single input sample, and make a prediction.
