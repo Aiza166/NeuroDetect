@@ -456,10 +456,13 @@ selection — it is the only structure the dataset has.
 | `README.md` | Corrected target name to `Diagnosis`; added shape/balance/baseline; added dead-source + vendored-CSV note and the slug discrepancy; added synthetic-data warning table; added metrics table, MI ranking, confusion matrices, interpretation. |
 | `ANALYSIS.md` | **New.** This document. |
 
-Not changed, deliberately: `preprocess_data.py`, `train_model.py`,
-`predict.py`, the notebook, and the saved `models/*` artifacts. The
-preprocessing leak in §3(b) is real and worth fixing, but rewriting the
-training pipeline was outside what you asked for.
+At the time of the audit, the following were deliberately left alone:
+`preprocess_data.py`, `train_model.py`, `predict.py`, the notebook, and the
+saved `models/*` artifacts.
+
+### Follow-up pass (same day)
+
+Those were subsequently fixed. See §8.
 
 ---
 
@@ -486,6 +489,55 @@ training pipeline was outside what you asked for.
    taken independently of the clinical assessment.
 5. **Keep the vendored CSV under version control** and note its checksum. Since
    the cited source is dead, `data/raw/parkinsons.csv` is now the primary record.
+
+**Status:** 1 and 3 are done (§8). 2 is done on the model/docs side; the
+frontend in `neurodetect-clarity` is a separate repo and still collects the
+three leaky inputs. 4 and 5 remain open decisions for you.
+
+---
+
+## 8. Follow-up: code fixes
+
+The audit above only documented the problems. This pass fixed them.
+
+| Area | Change |
+|---|---|
+| Preprocessing leak (§3b) | `preprocess_data.py` rewritten: split → fit scaler on **train only** → transform both. Exports `build_splits()` as the single source of truth for the split. Comment explains why the order matters. |
+| Artifacts | `models/parkinsons_model.h5` and `scaler.pkl` **deleted** — trained under both leaks. Replaced with two named pairs, `_HONEST` and `_ALL_FEATURES_LEAKY`, in the native `.keras` format. |
+| Training | `train_model.py` trains both arms and additionally measures the scaler-order effect. |
+| Inference | `predict_single.py` rewritten as a real CLI (it previously never prompted for anything — it fed hardcoded `[0.5] * 32`). Defaults to the honest model; warns on every run; explains the leakage if the baseline is selected. |
+| `predict.py` | Rewritten. It previously hardcoded UCI **voice** feature names (`MDVP:Fo(Hz)`, 22 columns) that do not exist in this 32-feature dataset, so it could only ever raise. Now evaluates both saved arms on the held-out test set. |
+| Notebook | Markdown banner inserted at the top. Original cells left intact. |
+| README | Disclaimer added near the top; Preprocessing section corrected to match the fixed code; structure tree updated; requirements block re-pinned. |
+| `requirements.txt` | Was a UTF-16 105-line `pip freeze` with **no TensorFlow at all**. Replaced with the six pins that actually reproduce this analysis, plus `scipy`. |
+| `.gitignore` | Was UTF-16, so **git never parsed it** — every rule was silently inactive, and it also excluded `*.pkl`/`*.h5`, which would have dropped the scalers. Rewritten as UTF-8. |
+| `LICENSE` | MIT for code, with an explicit notice that the dataset is third-party, synthetic, and not covered. |
+| `.ipynb_checkpoints/` | Stale committed editor autosave removed; it carried the misleading text with no banner. |
+
+### Did fixing the scaler order change the numbers?
+
+Barely. Same seed, same architecture:
+
+| Model | Metric | Old (pre-split scaler) | Fixed (train-only) | Δ |
+|---|---|---|---|---|
+| `ALL_FEATURES_LEAKY` | accuracy | 0.8527 | 0.8504 | −0.0024 |
+| | ROC-AUC | 0.9126 | 0.9121 | −0.0005 |
+| `HONEST` | accuracy | 0.6888 | 0.6912 | +0.0024 |
+| | ROC-AUC | 0.7383 | 0.7368 | −0.0015 |
+
+No metric moved by more than 0.0033, and the direction is not consistent. For
+standardisation on 2,105 rows the training fold's mean and standard deviation
+are already very close to the full dataset's, so the leaked information was
+nearly worthless. **The preprocessing leak was a correctness bug, not a scoring
+bug.** Reported rather than dropped, because a fix that changes nothing is still
+worth recording.
+
+The final numbers are identical to §4 (0.8504 / 0.9121 and 0.6912 / 0.7368),
+because `analysis/leakage_experiment.py` already fitted its scaler on the
+training fold only. The deleted `.h5` was the only artifact carrying the bug.
+
+Full per-arm figures: [`models/README.md`](models/README.md) and
+`models/metrics.json`.
 
 ---
 

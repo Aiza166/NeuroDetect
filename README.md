@@ -1,6 +1,21 @@
 # 🧠 NeuroDetect – Parkinson’s Disease Detection
 
-Predicting the likelihood of Parkinson’s Disease using clinical and demographic data with deep learning.
+An end-to-end machine learning pipeline — data preparation, training,
+evaluation, and inference — demonstrated on a Parkinson's disease
+classification task.
+
+> ## ⚠️ Disclaimer
+>
+> **This is a pipeline and methodology demonstration on synthetic data. It is
+> not a diagnostic tool, not a screening tool, and not for clinical use.**
+>
+> The dataset is computationally generated, not collected from real patients
+> ([evidence](ANALYSIS.md)). Most of the apparent predictive accuracy comes
+> from target leakage: the clinical assessment scores used as inputs already
+> encode the diagnosis. Both issues are documented rather than hidden — that
+> documentation is the point of this repository.
+>
+> No output of this project should inform any medical decision.
 
 
 ## 📁 Dataset
@@ -123,39 +138,93 @@ python analysis/leakage_experiment.py
 
 ## 🛠️ Preprocessing
 
-- Cleaned missing and irrelevant values
-- Standardized numeric features using `StandardScaler`
-- Data split into training and testing sets (80/20)
+Order matters here, and it is enforced in
+[`src/data_pipeline/preprocess_data.py`](src/data_pipeline/preprocess_data.py):
+
+1. Drop identifier columns (`PatientID`, `DoctorInCharge`). No missing values
+   exist to clean — the dataset has none.
+2. **Split first**, 80/20, `stratify=y`, `random_state=42`.
+3. **Then** standardise: `StandardScaler` is fitted on the **training fold
+   only** and applied to test with those train-derived statistics.
+4. Persist the scaler fitted on train alone, bundled with its column order.
+
+> **Why step 2 precedes step 3.** An earlier version of this file called
+> `scaler.fit_transform(X)` on the whole frame *before* splitting. That
+> computes each column's mean and standard deviation partly from test rows and
+> bakes them into the training features — a preprocessing leak that makes the
+> reported test score not a clean held-out estimate. It is fixed. Measured
+> impact of the fix was under 0.004 on every metric
+> ([details](models/README.md)), but correctness does not depend on the bug
+> being expensive.
 
 
 ## 🤖 Model
 
 - **Algorithm**: Deep Neural Network (Keras Sequential)
-- **Framework**: TensorFlow + Keras
-- **Architecture**:
-  - Dense layers with ReLU activation
-  - Dropout for regularization
-  - Final sigmoid activation
-- **Output**: Probability of Parkinson's presence
-- **Artifacts**:
-  - `parkinsons_model.h5`: Trained model
-  - `scaler.pkl`: Fitted scaler for preprocessing
+- **Framework**: TensorFlow 2.21 + Keras
+- **Architecture**: `Dense(64, relu)` → `Dropout(0.3)` → `Dense(32, relu)` →
+  `Dropout(0.2)` → `Dense(1, sigmoid)`
+- **Training**: Adam, binary cross-entropy, max 50 epochs, batch 32, early
+  stopping on `val_loss` (patience 5), seed 42, decision threshold 0.50
+- **Output**: Probability of the positive class
+- **Artifacts** — two arms, identical architecture, differing only in features:
+  - `models/parkinsons_model_HONEST.keras` + `scaler_HONEST.pkl` —
+    **the model to use.** 29 features; the three clinical assessment scores excluded.
+  - `models/parkinsons_model_ALL_FEATURES_LEAKY.keras` + `scaler_ALL_FEATURES_LEAKY.pkl` —
+    **documented baseline, do not use.** All 32 features; accuracy inflated by leakage.
+
+See [`models/README.md`](models/README.md) for which file to use and why.
 
 
 ## 🧪 Prediction Script
 
-Use the CLI script `predict_single.py` to:
-- Manually input patient features
-- Predict Parkinson’s risk using the saved model and scaler
-- Print a clear diagnostic result
+[`src/predict_single.py`](src/predict_single.py) runs single-patient inference.
+It defaults to the honest model and prints a synthetic-data warning on every
+run; selecting the leaky baseline prints an explicit explanation of where its
+apparent accuracy comes from.
+
+```bash
+python src/predict_single.py                 # honest model, dataset medians
+python src/predict_single.py --interactive   # prompt for each feature
+python src/predict_single.py --model leaky   # documented baseline, warns loudly
+```
+
+[`src/models/predict.py`](src/models/predict.py) evaluates both saved arms on
+the held-out test set.
 
 
 ## 📎 Run Locally
 
 ```bash
 git clone https://github.com/Aiza166/NeuroDetect.git
-cd NeuroDetect
-pip install -r requirements.txt
+```
+
+```bash
+cd NeuroDetect && pip install -r requirements.txt
+```
+
+Reproduce the full pipeline in order:
+
+```bash
+python src/data_pipeline/preprocess_data.py
+```
+
+```bash
+python src/models/train_model.py
+```
+
+```bash
+python src/models/predict.py
+```
+
+Reproduce the audit:
+
+```bash
+python analysis/eda_leakage.py
+```
+
+```bash
+python analysis/leakage_experiment.py
 ```
 
 
@@ -163,48 +232,64 @@ pip install -r requirements.txt
 
 ```bash
 NeuroDetect/
-├── README.md                    # Project overview and documentation
-├── requirements.txt             # Python dependencies
-├── all-files.txt                # Internal file listing (optional)
+├── README.md                       # Project overview and documentation
+├── ANALYSIS.md                     # Target-leakage and synthetic-data audit
+├── LICENSE                         # MIT for code; dataset excluded, see notice
+├── requirements.txt                # Pinned Python dependencies
+│
+├── analysis/
+│   ├── eda_leakage.py              # Shape, balance, correlation/MI, synthetic screens
+│   ├── leakage_experiment.py       # Three-arm controlled leakage experiment
+│   └── results.json                # Machine-readable experiment metrics
 │
 ├── data/
 │   ├── raw/
-│   │   └── parkinsons.csv       # Original dataset from Kaggle
+│   │   └── parkinsons.csv          # Vendored dataset; upstream source is dead
 │   └── processed/
-│       └── parkinsons_clean.csv # Cleaned dataset used for training
+│       ├── train_HONEST.csv        # 29 features, scaled on train stats only
+│       ├── test_HONEST.csv
+│       ├── train_ALL_FEATURES_LEAKY.csv   # 32 features
+│       ├── test_ALL_FEATURES_LEAKY.csv
+│       └── parkinsons_clean.csv    # DEPRECATED: scaled before splitting (leaky).
+│                                   # Kept only so the notebook still loads.
 │
 ├── disease-predictor/
-│   └── Parkinson_Detection.ipynb # Notebook for training, EDA, and evaluation
+│   └── Parkinson_Detection.ipynb   # Inference notebook (leaky baseline; see banner)
 │
 ├── models/
-│   ├── parkinsons_model.h5      # Trained deep learning model
-│   └── scaler.pkl               # Scaler used for feature standardization
+│   ├── README.md                   # Which artifact to use and why
+│   ├── parkinsons_model_HONEST.keras          # USE THIS ONE
+│   ├── scaler_HONEST.pkl                      # {"scaler", "features"}
+│   ├── parkinsons_model_ALL_FEATURES_LEAKY.keras  # Baseline, do not use
+│   ├── scaler_ALL_FEATURES_LEAKY.pkl
+│   └── metrics.json                # Metrics for both arms, both scaler orders
 │
-├── src/
-│   ├── predict_single.py        # Script for manual prediction from user input
-│   │
-│   ├── data_pipeline/
-│   │   ├── download_data.py     # (Optional) Logic for data fetching
-│   │   └── preprocess_data.py   # Data cleaning and transformation
-│   │
-│   └── models/
-│       ├── train_model.py       # Model architecture and training pipeline
-│       └── predict.py           # Model inference and evaluation script
+└── src/
+    ├── predict_single.py           # Single-patient inference CLI
+    │
+    ├── data_pipeline/
+    │   ├── download_data.py        # (Optional) upstream fetch; not needed
+    │   └── preprocess_data.py      # Split → fit scaler on train → transform
+    │
+    └── models/
+        ├── train_model.py          # Trains and persists both arms
+        └── predict.py              # Evaluates both arms on the held-out test set
 ```
 
 
 
 ## 📦 Requirements
 
-This project uses Python 3.10 and the following libraries:
+Verified on Python 3.13.5. These are the versions that actually reproduce the
+numbers in this README and in `ANALYSIS.md`:
 
 ```bash
-pandas==2.1.4
-numpy==1.24.3
-scikit-learn==1.3.2
-tensorflow==2.15.0
-joblib==1.3.2
-kagglehub==0.2.0
+pandas==2.3.0
+numpy==2.3.1
+scikit-learn==1.7.0
+scipy==1.16.0
+tensorflow-cpu==2.21.0
+joblib==1.5.1
 ```
 Install with:
 ```bash
