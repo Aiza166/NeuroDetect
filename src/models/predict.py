@@ -1,45 +1,60 @@
-import numpy as np
-import pandas as pd
-import joblib
-from tensorflow.keras.models import load_model
+"""Evaluate saved model artifacts on the held-out test set.
 
-# Load model and scaler
-model = load_model('models/parkinsons_model.h5')
-scaler = joblib.load('models/scaler.pkl')
+    python src/models/predict.py
 
-# Sample input (replace this with real data or user input later)
-sample_data = {
-    'MDVP:Fo(Hz)': 119.992,
-    'MDVP:Fhi(Hz)': 157.302,
-    'MDVP:Flo(Hz)': 74.997,
-    'MDVP:Jitter(%)': 0.00784,
-    'MDVP:Jitter(Abs)': 0.00007,
-    'MDVP:RAP': 0.00370,
-    'MDVP:PPQ': 0.00554,
-    'Jitter:DDP': 0.01109,
-    'MDVP:Shimmer': 0.04374,
-    'MDVP:Shimmer(dB)': 0.426,
-    'Shimmer:APQ3': 0.02182,
-    'Shimmer:APQ5': 0.03130,
-    'MDVP:APQ': 0.02971,
-    'Shimmer:DDA': 0.06545,
-    'NHR': 0.02211,
-    'HNR': 21.033,
-    'RPDE': 0.414783,
-    'DFA': 0.815285,
-    'spread1': -4.813031,
-    'spread2': 0.266482,
-    'D2': 2.301442,
-    'PPE': 0.284654
-}
-# Convert sample data to DataFrame
-input_df = pd.DataFrame([sample_data])
+Previously this script hardcoded UCI Parkinson's *voice* features
+('MDVP:Fo(Hz)', 'Jitter:DDP', ...). Those 22 columns do not exist in this
+dataset, which has 32 clinical/demographic features, so the script could only
+ever raise on `scaler.transform`. Rewritten to do what the README always said
+it did: run inference and report metrics.
+"""
 
-# Ensure all expected columns are present
-input_scaled = scaler.transform(input_df)
+import os
+import sys
 
-# Predict
-prediction = model.predict(input_scaled)[0][0]
-result = "Parkinson's Detected" if prediction > 0.5 else "No Parkinson's"
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-print(f"Prediction: {result} (Confidence: {prediction:.2f})")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+
+import joblib  # noqa: E402
+from tensorflow.keras.models import load_model  # noqa: E402
+from sklearn.metrics import (accuracy_score, confusion_matrix, f1_score,  # noqa: E402
+                             precision_score, recall_score, roc_auc_score)
+
+from src.data_pipeline.preprocess_data import ARMS, build_splits  # noqa: E402
+
+THRESHOLD = 0.50
+
+print("NOTE: synthetic data, pipeline demonstration only. Not a screening tool.")
+
+for arm, exclude in ARMS.items():
+    model_path = f"models/parkinsons_model_{arm}.keras"
+    scaler_path = f"models/scaler_{arm}.pkl"
+    if not os.path.exists(model_path):
+        print(f"\n{arm}: {model_path} not found -- run src/models/train_model.py")
+        continue
+
+    # Rebuild the same split the model was trained on; the persisted scaler is
+    # the authority on column order.
+    _, X_test, _, y_test, _, _ = build_splits(exclude)
+    features = joblib.load(scaler_path)["features"]
+    X_test = X_test[features]
+
+    prob = load_model(model_path).predict(X_test, verbose=0).ravel()
+    pred = (prob >= THRESHOLD).astype(int)
+
+    print(f"\n--- {arm} ({len(features)} features, n={len(y_test)}) ---")
+    for name, val in [
+        ("accuracy", accuracy_score(y_test, pred)),
+        ("precision", precision_score(y_test, pred, zero_division=0)),
+        ("recall", recall_score(y_test, pred, zero_division=0)),
+        ("f1", f1_score(y_test, pred, zero_division=0)),
+        ("roc_auc", roc_auc_score(y_test, prob)),
+    ]:
+        print(f"  {name:10s} {val:.4f}")
+    (tn, fp), (fn, tp) = confusion_matrix(y_test, pred, labels=[0, 1]).tolist()
+    print(f"  confusion matrix: TN={tn} FP={fp} FN={fn} TP={tp}")
+    if arm == "ALL_FEATURES_LEAKY":
+        print("  ^ inflated by target leakage (UPDRS/MoCA/FunctionalAssessment).")
+
+print(f"\nMajority-class baseline accuracy: 0.6200")
