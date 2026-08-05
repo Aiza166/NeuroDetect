@@ -297,9 +297,20 @@ pip install -r requirements.txt
 ```
 
 
-## 🔍 Future Enhancements
+## 🔍 Possible Next Steps
 
-- Add audio-based detection via voice samples (e.g. tremor in speech)
-- Create a web frontend using Streamlit
-- Dockerize the app and add CI/CD for production deployment
+Ideas, not commitments:
+
+- A static audit dashboard presenting the leakage findings — the three model
+  arms, the mutual-information ranking, and the synthetic-data evidence — read
+  from `analysis/results.json`. No backend or TensorFlow needed.
+- Validate the pipeline against a real, non-synthetic Parkinson's dataset. The
+  method is sound; the data is what limits any conclusion here.
+- Regenerate `data/processed/parkinsons_clean.csv` without the pre-split
+  scaling, and update notebook cell 5 to match.
+
+> The previous version of this section listed audio-based detection from voice
+> samples. That was carried over from confusion with the UCI Parkinson's *voice*
+> dataset — this dataset has never contained a voice measurement. See
+> [`ANALYSIS.md`](ANALYSIS.md) §8.
 
